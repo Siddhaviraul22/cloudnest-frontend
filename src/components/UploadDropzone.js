@@ -17,11 +17,19 @@ import {
   completeUpload
 } from "../lib/api";
 
-import { supabase } from "../lib/supabase";
+import * as tus from "tus-js-client";
 
 const STORAGE_BUCKET =
   process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET ||
   "cloudnest";
+
+const SUPABASE_URL =
+  process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+const CHUNK_SIZE =
+  10 * 1024 * 1024;
+
+const MAX_CONCURRENT_UPLOADS = 3;
 
 const formatBytes = (bytes) => {
   if (!bytes) {
@@ -77,6 +85,128 @@ export default function UploadDropzone({
     );
   };
 
+  const uploadWithTus = (
+    file,
+    uploadId,
+    init
+  ) => {
+    return new Promise(
+      (resolve, reject) => {
+        if (!SUPABASE_URL) {
+          reject(
+            new Error(
+              "NEXT_PUBLIC_SUPABASE_URL is not configured"
+            )
+          );
+
+          return;
+        }
+
+        if (
+          !init?.upload?.path ||
+          !init?.upload?.token
+        ) {
+          reject(
+            new Error(
+              "Invalid resumable upload information received from the server"
+            )
+          );
+
+          return;
+        }
+
+        const endpoint =
+          `${SUPABASE_URL}/storage/v1/upload/resumable`;
+
+        const upload =
+          new tus.Upload(
+            file,
+            {
+              endpoint,
+
+              chunkSize:
+                CHUNK_SIZE,
+
+              retryDelays: [
+                0,
+                1000,
+                3000,
+                5000,
+                10000
+              ],
+
+              headers: {
+                "x-signature":
+                  init.upload.token
+              },
+
+              metadata: {
+                bucketName:
+                  STORAGE_BUCKET,
+
+                objectName:
+                  init.upload.path,
+
+                contentType:
+                  file.type ||
+                  "application/octet-stream"
+              },
+
+              onError: (error) => {
+                console.error(
+                  "TUS upload error:",
+                  error
+                );
+
+                reject(
+                  error instanceof Error
+                    ? error
+                    : new Error(
+                        "Resumable upload failed"
+                      )
+                );
+              },
+
+              onProgress: (
+                bytesUploaded,
+                bytesTotal
+              ) => {
+                if (!bytesTotal) {
+                  return;
+                }
+
+                const percentage =
+                  (bytesUploaded /
+                    bytesTotal) *
+                  100;
+
+                updateUpload(
+                  uploadId,
+                  {
+                    progress:
+                      percentage
+                  }
+                );
+              },
+
+              onSuccess: () => {
+                resolve();
+              }
+            }
+          );
+
+        updateUpload(
+          uploadId,
+          {
+            progress: 0
+          }
+        );
+
+        upload.start();
+      }
+    );
+  };
+
   const uploadFile = async (
     file
   ) => {
@@ -105,13 +235,6 @@ export default function UploadDropzone({
           folderId
         });
 
-      updateUpload(
-        uploadId,
-        {
-          progress: 10
-        }
-      );
-
       if (
         !init?.fileId ||
         !init?.upload?.path ||
@@ -122,38 +245,23 @@ export default function UploadDropzone({
         );
       }
 
-      const {
-        error: storageError
-      } =
-        await supabase.storage
-          .from(STORAGE_BUCKET)
-          .uploadToSignedUrl(
-            init.upload.path,
-            init.upload.token,
-            file,
-            {
-              contentType:
-                file.type ||
-                "application/octet-stream"
-            }
-          );
+      updateUpload(
+        uploadId,
+        {
+          progress: 1
+        }
+      );
 
-      if (storageError) {
-        console.error(
-          "Supabase upload error:",
-          storageError
-        );
-
-        throw new Error(
-          storageError.message ||
-          "Storage upload failed"
-        );
-      }
+      await uploadWithTus(
+        file,
+        uploadId,
+        init
+      );
 
       updateUpload(
         uploadId,
         {
-          progress: 90
+          progress: 95
         }
       );
 
@@ -183,7 +291,7 @@ export default function UploadDropzone({
         {
           status: "error",
           error:
-            error.message ||
+            error?.message ||
             "Upload failed"
         }
       );
@@ -202,9 +310,42 @@ export default function UploadDropzone({
       return;
     }
 
-    for (const file of files) {
-      await uploadFile(file);
-    }
+    let nextIndex = 0;
+
+    const worker = async () => {
+      while (true) {
+        const currentIndex =
+          nextIndex;
+
+        nextIndex += 1;
+
+        if (
+          currentIndex >=
+          files.length
+        ) {
+          return;
+        }
+
+        await uploadFile(
+          files[currentIndex]
+        );
+      }
+    };
+
+    const workerCount =
+      Math.min(
+        MAX_CONCURRENT_UPLOADS,
+        files.length
+      );
+
+    await Promise.all(
+      Array.from(
+        {
+          length: workerCount
+        },
+        () => worker()
+      )
+    );
   };
 
   const handleDragOver = (

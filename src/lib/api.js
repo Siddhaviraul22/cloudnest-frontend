@@ -37,7 +37,13 @@ const apiRequest = async (
   return data;
 };
 
-export const registerUser = (payload) =>
+/* =========================
+   AUTH
+========================= */
+
+export const registerUser = (
+  payload
+) =>
   apiRequest(
     "/api/auth/register",
     {
@@ -46,7 +52,9 @@ export const registerUser = (payload) =>
     }
   );
 
-export const loginUser = (payload) =>
+export const loginUser = (
+  payload
+) =>
   apiRequest(
     "/api/auth/login",
     {
@@ -67,6 +75,10 @@ export const getCurrentUser = () =>
   apiRequest(
     "/api/auth/me"
   );
+
+/* =========================
+   FILE UPLOAD
+========================= */
 
 export const initializeUpload = (
   payload
@@ -91,6 +103,10 @@ export const completeUpload = (
       })
     }
   );
+
+/* =========================
+   FOLDERS
+========================= */
 
 export const getRootChildren = () =>
   apiRequest(
@@ -151,13 +167,19 @@ export const restoreFolder = (
     }
   );
 
+/* =========================
+   FILE MANAGEMENT
+========================= */
+
 export const getFiles = (
   folderId = null
 ) =>
   apiRequest(
     `/api/files${
       folderId
-        ? `?folderId=${encodeURIComponent(folderId)}`
+        ? `?folderId=${encodeURIComponent(
+            folderId
+          )}`
         : ""
     }`
   );
@@ -184,7 +206,9 @@ export const updateFile = (
     `/api/files/${fileId}`,
     {
       method: "PATCH",
-      body: JSON.stringify(payload)
+      body: JSON.stringify(
+        payload
+      )
     }
   );
 
@@ -218,10 +242,18 @@ export const permanentlyDeleteFile = (
     }
   );
 
+/* =========================
+   TRASH
+========================= */
+
 export const getTrash = () =>
   apiRequest(
     "/api/files/trash"
   );
+
+/* =========================
+   STARRED
+========================= */
 
 export const starFile = (
   fileId
@@ -248,10 +280,18 @@ export const getStarredFiles = () =>
     "/api/files/starred"
   );
 
+/* =========================
+   RECENT
+========================= */
+
 export const getRecentFiles = () =>
   apiRequest(
     "/api/files/recent"
   );
+
+/* =========================
+   VERSIONS
+========================= */
 
 export const getVersions = (
   fileId
@@ -260,6 +300,10 @@ export const getVersions = (
     `/api/files/${fileId}/versions`
   );
 
+/* =========================
+   SHARING
+========================= */
+
 export const createShare = (
   payload
 ) =>
@@ -267,7 +311,9 @@ export const createShare = (
     "/api/shares",
     {
       method: "POST",
-      body: JSON.stringify(payload)
+      body: JSON.stringify(
+        payload
+      )
     }
   );
 
@@ -280,7 +326,7 @@ export const getShares = (
   );
 
 export const deleteShare = (
- shareId
+  shareId
 ) =>
   apiRequest(
     `/api/shares/${shareId}`,
@@ -294,6 +340,10 @@ export const getReceivedShares = () =>
     "/api/shares/received"
   );
 
+/* =========================
+   SHARE LINKS
+========================= */
+
 export const createLinkShare = (
   payload
 ) =>
@@ -301,7 +351,9 @@ export const createLinkShare = (
     "/api/link-shares",
     {
       method: "POST",
-      body: JSON.stringify(payload)
+      body: JSON.stringify(
+        payload
+      )
     }
   );
 
@@ -323,7 +375,7 @@ export const resolveLink = (
   );
 
 export const deleteLinkShare = (
- linkId
+  linkId
 ) =>
   apiRequest(
     `/api/link-shares/${linkId}`,
@@ -331,6 +383,10 @@ export const deleteLinkShare = (
       method: "DELETE"
     }
   );
+
+/* =========================
+   SEARCH
+========================= */
 
 export const searchFiles = (
   query,
@@ -344,6 +400,10 @@ export const searchFiles = (
       type
     )}&starred=${starred}`
   );
+
+/* =========================
+   DASHBOARD
+========================= */
 
 export const getActivity = () =>
   apiRequest(
@@ -359,8 +419,12 @@ export const getDashboardSummary = () =>
   apiRequest(
     "/api/summary"
   );
-  
-  export const findUser = (email) =>
+
+/* =========================
+   USER SEARCH
+========================= */
+
+export const findUser = (email) =>
   apiRequest(
-    `/api/dashboard/users?email=${encodeURIComponent(email)}`
+    `/api/users?email=${encodeURIComponent(email)}`
   );

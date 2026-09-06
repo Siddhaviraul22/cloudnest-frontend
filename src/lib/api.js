@@ -156,6 +156,13 @@ export const deleteFolder = (
       method: "DELETE"
     }
   );
+  export const permanentlyDeleteFolder = (id) =>
+  apiRequest(
+    `/api/folders/${id}/permanent`,
+    {
+      method: "DELETE"
+    }
+  );
 
 export const restoreFolder = (
   folderId
@@ -254,6 +261,14 @@ export const getTrash = async () => {
     }
   );
 };
+export const getTrashFolders = async () => {
+  return apiRequest(
+    "/api/folders/trash",
+    {
+      method: "GET"
+    }
+  );
+};
 
 /* =========================
    STARRED
@@ -279,11 +294,24 @@ export const unstarFile = (
     }
   );
 
-export const getStarredFiles = () =>
+export const starFolder = (folderId) =>
   apiRequest(
-    "/api/files/starred"
+    `/api/folders/${folderId}/star`,
+    {
+      method: "POST"
+    }
   );
 
+export const unstarFolder = (folderId) =>
+  apiRequest(
+    `/api/folders/${folderId}/star`,
+    {
+      method: "DELETE"
+    }
+  );
+
+export const getStarred = () =>
+  apiRequest("/api/starred");
 /* =========================
    RECENT
 ========================= */

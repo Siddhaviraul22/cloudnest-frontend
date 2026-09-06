@@ -13,6 +13,7 @@ import {
 import {
   Cloud,
   FolderPlus,
+  Upload,
   Search,
   Star,
   Clock3,
@@ -22,11 +23,13 @@ import {
   Grid2X2,
   List,
   MoreVertical,
+  Menu,
   Pencil,
   Download,
   RotateCcw,
   X,
   Folder,
+  File,
   HardDrive,
   ChevronRight,
   Home,
@@ -34,12 +37,12 @@ import {
   Link2,
   Trash,
   ArrowUpDown,
+  UserCircle,
   FileText,
   Eye,
-  Image as ImageIcon,
+  ImageIcon,
   Video,
-  Music,
-  File
+  Music
 } from "lucide-react";
 
 import {
@@ -63,17 +66,20 @@ import {
   getStarredFiles,
   getRecentFiles,
   getTrash,
+  getTrashFolders,
   getUsage,
   permanentlyDeleteFile,
+  permanentlyDeleteFolder,
   restoreFile,
+  restoreFolder,
   searchFiles,
   starFile,
   unstarFile,
+  starFolder,
+unstarFolder,
+getStarred,
   updateFile,
-  updateFolder,
-  createShare,
-  findUser,
-  createLinkShare
+  updateFolder
 } from "../../lib/api";
 
 
@@ -122,20 +128,20 @@ const formatDate = (date) => {
 };
 
 
-const formatDateTime = (date) => {
-  if (!date) {
-    return "";
-  }
+const getSize = (file) => {
+  return Number(
+    file?.size_bytes ??
+      file?.sizeBytes ??
+      file?.size ??
+      0
+  );
+};
 
-  return new Date(date).toLocaleString(
-    undefined,
-    {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit"
-    }
+
+const isDeleted = (file) => {
+  return (
+    file?.is_deleted === true ||
+    file?.isDeleted === true
   );
 };
 
@@ -157,45 +163,6 @@ const getInitials = (name) => {
 };
 
 
-const isDeleted = (file) => {
-  return (
-    file?.is_deleted === true ||
-    file?.isDeleted === true
-  );
-};
-
-
-const getCreatedDate = (item) => {
-  return (
-    item?.created_at ||
-    item?.createdAt ||
-    item?.uploaded_at ||
-    item?.uploadedAt ||
-    null
-  );
-};
-
-
-const getModifiedDate = (item) => {
-  return (
-    item?.updated_at ||
-    item?.updatedAt ||
-    item?.modified_at ||
-    item?.modifiedAt ||
-    getCreatedDate(item)
-  );
-};
-
-
-const getSize = (item) => {
-  return Number(
-    item?.size_bytes ||
-      item?.sizeBytes ||
-      0
-  );
-};
-
-
 /* =========================================================
    DASHBOARD
 ========================================================= */
@@ -209,15 +176,18 @@ export default function DashboardPage() {
     logout
   } = useAuth();
 
+
   const [
     section,
     setSection
   ] = useState("drive");
 
+
   const [
     currentFolder,
     setCurrentFolder
   ] = useState(null);
+
 
   const [
     data,
@@ -228,59 +198,75 @@ export default function DashboardPage() {
     path: []
   });
 
+
   const [
     usage,
     setUsage
   ] = useState(null);
+
 
   const [
     summary,
     setSummary
   ] = useState(null);
 
+
   const [
     search,
     setSearch
   ] = useState("");
 
+
   const [
     sort,
     setSort
-  ] = useState("modified-desc");
+  ] = useState("updated-desc");
+
 
   const [
     view,
     setView
   ] = useState("grid");
 
+
   const [
     loadingData,
     setLoadingData
   ] = useState(true);
+
 
   const [
     error,
     setError
   ] = useState("");
 
+
+  const [
+    modal,
+    setModal
+  ] = useState(null);
+
+
   const [
     selected,
     setSelected
   ] = useState(null);
 
-  const [
-    shareModal,
-    setShareModal
-  ] = useState(null);
 
   const [
     previewFile,
     setPreviewFile
   ] = useState(null);
 
+
   const [
     actionLoading,
     setActionLoading
+  ] = useState(false);
+
+  const [
+    mobileSidebarOpen,
+    setMobileSidebarOpen
   ] = useState(false);
 
 
@@ -289,7 +275,10 @@ export default function DashboardPage() {
   ======================================================= */
 
   useEffect(() => {
-    if (!loading && !user) {
+    if (
+      !loading &&
+      !user
+    ) {
       router.push("/login");
     }
   }, [
@@ -402,7 +391,7 @@ export default function DashboardPage() {
 
 
   /* =======================================================
-     OPEN FOLDER
+     FOLDER NAVIGATION
   ======================================================= */
 
   const openFolder = (folder) => {
@@ -480,7 +469,9 @@ export default function DashboardPage() {
     }
 
     try {
-      if (item.kind === "folder") {
+      if (
+        item.kind === "folder"
+      ) {
         await updateFolder(
           item.id,
           {
@@ -500,7 +491,7 @@ export default function DashboardPage() {
     } catch (err) {
       setError(
         err.message ||
-          "Unable to rename."
+          "Unable to rename item."
       );
     }
   };
@@ -511,79 +502,35 @@ export default function DashboardPage() {
   ======================================================= */
 
   const handleDelete = async (item) => {
-  if (
-    !window.confirm(
-      `Move "${item.name}" to trash?`
-    )
-  ) {
-    return;
-  }
-
-  setError("");
-  setActionLoading(true);
-
-  try {
-    if (item.kind === "folder") {
-      await deleteFolder(
-        item.id
-      );
-    } else {
-      await deleteFile(
-        item.id
-      );
+    if (
+      !window.confirm(
+        `Move "${item.name}" to trash?`
+      )
+    ) {
+      return;
     }
 
-    /*
-     * Remove the item immediately
-     * from the current screen.
-     */
-    setData((current) => ({
-      ...current,
-      folders:
+    try {
+      if (
         item.kind === "folder"
-          ? current.folders.filter(
-              (folder) =>
-                folder.id !== item.id
-            )
-          : current.folders,
-      files:
-        item.kind !== "folder"
-          ? current.files.filter(
-              (file) =>
-                file.id !== item.id
-            )
-          : current.files
-    }));
+      ) {
+        await deleteFolder(
+          item.id
+        );
+      } else {
+        await deleteFile(
+          item.id
+        );
+      }
 
-    /*
-     * Refresh the current section
-     * so the server becomes the
-     * source of truth.
-     */
-    if (section === "drive") {
-      await loadDrive();
-    }
-
-    await loadDashboard();
-
-    /*
-     * If the user is in Trash,
-     * reload Trash itself.
-     */
-    if (section === "trash") {
-      await showSection(
-        "trash"
+      await refreshCurrent();
+    } catch (err) {
+      setError(
+        err.message ||
+          "Unable to move item to trash."
       );
     }
-  } catch (err) {
-    setError(
-      err.message ||
-        "Unable to delete."
-    );
-  } finally {
-    setActionLoading(false);
-  }
-};
+  };
 
 
   /* =======================================================
@@ -597,14 +544,12 @@ export default function DashboardPage() {
           file.id
         );
 
-      if (result?.downloadUrl) {
+      if (
+        result?.downloadUrl
+      ) {
         window.open(
           result.downloadUrl,
           "_blank"
-        );
-      } else {
-        throw new Error(
-          "Download URL was not returned."
         );
       }
     } catch (err) {
@@ -622,24 +567,25 @@ export default function DashboardPage() {
 
   const handleOpenFile = async (file) => {
     try {
-      setError("");
-
       const result =
         await getFile(
           file.id
         );
 
-      if (!result?.signedUrl) {
-        throw new Error(
-          "Unable to create file preview."
+      if (
+        result?.signedUrl
+      ) {
+        setPreviewFile({
+          ...file,
+          ...(result.file || {}),
+          signedUrl:
+            result.signedUrl
+        });
+      } else {
+        setError(
+          "Preview URL was not available."
         );
       }
-
-      setPreviewFile({
-        ...file,
-        signedUrl:
-          result.signedUrl
-      });
     } catch (err) {
       setError(
         err.message ||
@@ -649,95 +595,144 @@ export default function DashboardPage() {
   };
 
 
-  /* =======================================================
-     STAR / UNSTAR
-  ======================================================= */
-
-  const handleStar = async (file) => {
-    if (actionLoading) {
-      return;
-    }
-
-    setActionLoading(true);
-
-    const currentlyStarred =
-      Boolean(file.starred);
-
-    try {
-      if (currentlyStarred) {
-        await unstarFile(
-          file.id
-        );
-
-        if (section === "starred") {
-          setData((current) => ({
-            ...current,
-            files:
-              current.files.filter(
-                (item) =>
-                  item.id !==
-                  file.id
-              )
-          }));
-        } else {
-          setData((current) => ({
-            ...current,
-            files:
-              current.files.map(
-                (item) =>
-                  item.id === file.id
-                    ? {
-                        ...item,
-                        starred: false
-                      }
-                    : item
-              )
-          }));
-        }
-      } else {
-        await starFile(
-          file.id
-        );
-
-        setData((current) => ({
-          ...current,
-          files:
-            current.files.map(
-              (item) =>
-                item.id === file.id
-                  ? {
-                      ...item,
-                      starred: true
-                    }
-                  : item
-            )
-        }));
-      }
-
-      await loadDashboard();
-    } catch (err) {
-      setError(
-        err.message ||
-          "Unable to update star."
-      );
-    } finally {
-      setActionLoading(false);
-    }
+  const closePreview = () => {
+    setPreviewFile(null);
   };
 
 
   /* =======================================================
-     SECTION
+     STAR / UNSTAR
+  ======================================================= */
+
+const handleStar = async (item) => {
+  if (actionLoading) {
+    return;
+  }
+
+  setActionLoading(true);
+
+  const currentlyStarred =
+    Boolean(item.starred);
+
+  const isFolder =
+    item.kind === "folder";
+
+  try {
+    if (currentlyStarred) {
+      if (isFolder) {
+        await unstarFolder(item.id);
+      } else {
+        await unstarFile(item.id);
+      }
+
+      if (section === "starred") {
+        setData((current) => ({
+          ...current,
+
+          folders:
+            current.folders.filter(
+              (folder) =>
+                folder.id !== item.id
+            ),
+
+          files:
+            current.files.filter(
+              (file) =>
+                file.id !== item.id
+            )
+        }));
+      } else {
+        setData((current) => ({
+          ...current,
+
+          folders:
+            current.folders.map(
+              (folder) =>
+                folder.id === item.id
+                  ? {
+                      ...folder,
+                      starred: false
+                    }
+                  : folder
+            ),
+
+          files:
+            current.files.map(
+              (file) =>
+                file.id === item.id
+                  ? {
+                      ...file,
+                      starred: false
+                    }
+                  : file
+            )
+        }));
+      }
+    } else {
+      if (isFolder) {
+        await starFolder(item.id);
+      } else {
+        await starFile(item.id);
+      }
+
+      setData((current) => ({
+        ...current,
+
+        folders:
+          current.folders.map(
+            (folder) =>
+              folder.id === item.id
+                ? {
+                    ...folder,
+                    starred: true
+                  }
+                : folder
+          ),
+
+        files:
+          current.files.map(
+            (file) =>
+              file.id === item.id
+                ? {
+                    ...file,
+                    starred: true
+                  }
+                : file
+          )
+      }));
+    }
+
+    await loadDashboard();
+  } catch (err) {
+    setError(
+      err.message ||
+        "Unable to update star."
+    );
+  } finally {
+    setActionLoading(false);
+  }
+};
+
+
+  /* =======================================================
+     SECTION LOADING
   ======================================================= */
 
   const showSection = async (name) => {
+    setMobileSidebarOpen(false);
     setSection(name);
     setCurrentFolder(null);
     setError("");
     setLoadingData(true);
 
     try {
-      if (name === "drive") {
+      /* ---------------------------------------------------
+         MY DRIVE
+      --------------------------------------------------- */
+
+      if (
+        name === "drive"
+      ) {
         const result =
           await getRootChildren();
 
@@ -755,67 +750,123 @@ export default function DashboardPage() {
       }
 
 
-      if (name === "trash") {
-        const result =
-          await getTrash();
+      /* ---------------------------------------------------
+         TRASH
+      --------------------------------------------------- */
 
-        const deletedFiles =
-          (
-            result?.files ||
-            []
-          ).filter(
-            (file) =>
-              isDeleted(file)
-          );
+      if (
+  name === "trash"
+) {
+  const [
+    fileTrashResult,
+    folderTrashResult
+  ] = await Promise.all([
+    getTrash(),
+    getTrashFolders()
+  ]);
 
-        setData({
-          folders: [],
-          files:
-            deletedFiles.map(
-              (file) => ({
-                ...file,
-                kind: "file",
-                starred: false
-              })
-            ),
-          path: []
-        });
+  const deletedFiles =
+    (
+      fileTrashResult?.files ||
+      []
+    ).filter(
+      (file) =>
+        isDeleted(file)
+    );
 
-        return;
-      }
+  const deletedFolders =
+    (
+      folderTrashResult?.folders ||
+      []
+    ).filter(
+      (folder) =>
+        isDeleted(folder)
+    );
 
+  setData({
+    folders:
+      deletedFolders.map(
+        (folder) => ({
+          ...folder,
+          kind: "folder"
+        })
+      ),
+
+    files:
+      deletedFiles.map(
+        (file) => ({
+          ...file,
+          kind: "file",
+          starred: false
+        })
+      ),
+
+    path: []
+  });
+
+  return;
+}
+
+
+      /* ---------------------------------------------------
+         STARRED
+      --------------------------------------------------- */
 
       if (name === "starred") {
-        const result =
-          await getStarredFiles();
+  const result =
+    await getStarred();
 
-        const starredFiles =
-          (
-            result?.files ||
-            []
-          ).filter(
-            (file) =>
-              !isDeleted(file)
-          );
+  const starredFolders =
+    (
+      result?.folders ||
+      []
+    )
+      .filter(
+        (folder) =>
+          !isDeleted(folder)
+      )
+      .map(
+        (folder) => ({
+          ...folder,
+          kind: "folder",
+          starred: true
+        })
+      );
 
-        setData({
-          folders: [],
-          files:
-            starredFiles.map(
-              (file) => ({
-                ...file,
-                kind: "file",
-                starred: true
-              })
-            ),
-          path: []
-        });
+  const starredFiles =
+    (
+      result?.files ||
+      []
+    )
+      .filter(
+        (file) =>
+          !isDeleted(file)
+      )
+      .map(
+        (file) => ({
+          ...file,
+          kind: "file",
+          starred: true
+        })
+      );
 
-        return;
-      }
+  setData({
+    folders: starredFolders,
+    files: starredFiles,
+    path: []
+  });
+
+  return;
+}
 
 
-      if (name === "recent") {
+      /* ---------------------------------------------------
+         RECENT
+      --------------------------------------------------- */
+
+      if (
+        name === "recent"
+      ) {
         const result =
           await getRecentFiles();
 
@@ -843,7 +894,13 @@ export default function DashboardPage() {
       }
 
 
-      if (name === "shared") {
+      /* ---------------------------------------------------
+         SHARED
+      --------------------------------------------------- */
+
+      if (
+        name === "shared"
+      ) {
         const result =
           await getReceivedShares();
 
@@ -955,24 +1012,30 @@ export default function DashboardPage() {
      RESTORE
   ======================================================= */
 
-  const handleRestore = async (file) => {
-    try {
+  const handleRestore = async (item) => {
+  try {
+    if (item.kind === "folder") {
+      await restoreFolder(
+        item.id
+      );
+    } else {
       await restoreFile(
-        file.id
-      );
-
-      await showSection(
-        "trash"
-      );
-
-      await loadDashboard();
-    } catch (err) {
-      setError(
-        err.message ||
-          "Unable to restore file."
+        item.id
       );
     }
-  };
+
+    await showSection(
+      "trash"
+    );
+
+    await loadDashboard();
+  } catch (err) {
+    setError(
+      err.message ||
+        "Unable to restore item."
+    );
+  }
+};
 
 
   /* =======================================================
@@ -1002,109 +1065,92 @@ export default function DashboardPage() {
       } catch (err) {
         setError(
           err.message ||
-            "Unable to permanently delete."
+            "Unable to permanently delete file."
         );
       }
     };
+    const handlePermanentDeleteFolder =
+  async (folder) => {
+    if (
+      !window.confirm(
+        `Permanently delete "${folder.name}" and everything inside it? This cannot be undone.`
+      )
+    ) {
+      return;
+    }
 
+    try {
+      await permanentlyDeleteFolder(
+        folder.id
+      );
 
-  /* =======================================================
-     SORTING
-  ======================================================= */
+      await showSection(
+        "trash"
+      );
 
-  const compareItems = (a, b) => {
-    switch (sort) {
-      case "name-asc":
-        return String(
-          a.name || ""
-        ).localeCompare(
-          String(
-            b.name || ""
-          ),
-          undefined,
-          {
-            numeric: true,
-            sensitivity: "base"
-          }
-        );
-
-      case "name-desc":
-        return String(
-          b.name || ""
-        ).localeCompare(
-          String(
-            a.name || ""
-          ),
-          undefined,
-          {
-            numeric: true,
-            sensitivity: "base"
-          }
-        );
-
-      case "created-asc":
-        return (
-          new Date(
-            getCreatedDate(a)
-          ).getTime() -
-          new Date(
-            getCreatedDate(b)
-          ).getTime()
-        );
-
-      case "created-desc":
-        return (
-          new Date(
-            getCreatedDate(b)
-          ).getTime() -
-          new Date(
-            getCreatedDate(a)
-          ).getTime()
-        );
-
-      case "modified-asc":
-        return (
-          new Date(
-            getModifiedDate(a)
-          ).getTime() -
-          new Date(
-            getModifiedDate(b)
-          ).getTime()
-        );
-
-      case "modified-desc":
-        return (
-          new Date(
-            getModifiedDate(b)
-          ).getTime() -
-          new Date(
-            getModifiedDate(a)
-          ).getTime()
-        );
-
-      case "size-asc":
-        return (
-          getSize(a) -
-          getSize(b)
-        );
-
-      case "size-desc":
-        return (
-          getSize(b) -
-          getSize(a)
-        );
-
-      default:
-        return 0;
+      await loadDashboard();
+    } catch (err) {
+      setError(
+        err.message ||
+          "Unable to permanently delete folder."
+      );
     }
   };
 
+  /* =======================================================
+     SORT
+  ======================================================= */
 
   const sortedFolders =
     useMemo(() => {
-      return [
-        ...(data.folders || [])
-      ].sort(compareItems);
+      const folders =
+        [
+          ...(data?.folders || [])
+        ];
+
+      folders.sort(
+        (a, b) => {
+          if (
+            sort === "name-asc"
+          ) {
+            return a.name.localeCompare(
+              b.name
+            );
+          }
+
+          if (
+            sort === "name-desc"
+          ) {
+            return b.name.localeCompare(
+              a.name
+            );
+          }
+
+          const aDate =
+            new Date(
+              a.updated_at ||
+                a.created_at ||
+                0
+            ).getTime();
+
+          const bDate =
+            new Date(
+              b.updated_at ||
+                b.created_at ||
+                0
+            ).getTime();
+
+          if (
+            sort === "updated-asc"
+          ) {
+            return aDate - bDate;
+          }
+
+          return bDate - aDate;
+        }
+      );
+
+      return folders;
     }, [
       data.folders,
       sort
@@ -1113,9 +1159,72 @@ export default function DashboardPage() {
 
   const sortedFiles =
     useMemo(() => {
-      return [
-        ...(data.files || [])
-      ].sort(compareItems);
+      const files =
+        [
+          ...(data?.files || [])
+        ];
+
+      files.sort(
+        (a, b) => {
+          if (
+            sort === "name-asc"
+          ) {
+            return a.name.localeCompare(
+              b.name
+            );
+          }
+
+          if (
+            sort === "name-desc"
+          ) {
+            return b.name.localeCompare(
+              a.name
+            );
+          }
+
+          if (
+            sort === "size-asc"
+          ) {
+            return (
+              getSize(a) -
+              getSize(b)
+            );
+          }
+
+          if (
+            sort === "size-desc"
+          ) {
+            return (
+              getSize(b) -
+              getSize(a)
+            );
+          }
+
+          const aDate =
+            new Date(
+              a.updated_at ||
+                a.created_at ||
+                0
+            ).getTime();
+
+          const bDate =
+            new Date(
+              b.updated_at ||
+                b.created_at ||
+                0
+            ).getTime();
+
+          if (
+            sort === "updated-asc"
+          ) {
+            return aDate - bDate;
+          }
+
+          return bDate - aDate;
+        }
+      );
+
+      return files;
     }, [
       data.files,
       sort
@@ -1123,16 +1232,90 @@ export default function DashboardPage() {
 
 
   /* =======================================================
-     PREVIEW
+     SECTION TITLE
   ======================================================= */
 
-  const closePreview = () => {
-    setPreviewFile(null);
+  const sectionTitle =
+    section === "drive"
+      ? currentFolder?.name ||
+        "My Drive"
+      : section === "shared"
+        ? "Shared with me"
+        : section === "starred"
+          ? "Starred"
+          : section === "recent"
+            ? "Recent"
+            : section === "trash"
+              ? "Trash"
+              : "Search";
+
+
+  /* =======================================================
+     USER DISPLAY
+  ======================================================= */
+
+  const userName =
+    user?.name ||
+    user?.full_name ||
+    user?.email?.split("@")[0] ||
+    "CloudNest User";
+
+
+  const usageBytes =
+    Number(
+      usage?.usedBytes ??
+        usage?.used_bytes ??
+        usage?.used ??
+        0
+    );
+
+
+  const limitBytes =
+    Number(
+      usage?.limitBytes ??
+        usage?.limit_bytes ??
+        usage?.limit ??
+        5 *
+          1024 *
+          1024 *
+          1024
+    );
+
+
+  const usagePercentage =
+    limitBytes > 0
+      ? Math.min(
+          100,
+          Math.round(
+            (usageBytes /
+              limitBytes) *
+              100
+          )
+        )
+      : 0;
+
+
+  /* =======================================================
+     LOGOUT
+  ======================================================= */
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      router.push(
+        "/login"
+      );
+    } catch (err) {
+      setError(
+        err.message ||
+          "Unable to sign out."
+      );
+    }
   };
 
 
   /* =======================================================
-     LOADING
+     LOADING SCREEN
   ======================================================= */
 
   if (
@@ -1140,16 +1323,16 @@ export default function DashboardPage() {
     !user
   ) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-slate-50">
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center mx-auto mb-4">
+          <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 flex items-center justify-center mx-auto mb-4 shadow-sm">
             <Cloud
-              size={25}
-              className="text-white"
+              size={24}
+              className="animate-pulse"
             />
           </div>
 
-          <p className="text-slate-500">
+          <p className="text-sm text-slate-500">
             Loading CloudNest...
           </p>
         </div>
@@ -1158,25 +1341,9 @@ export default function DashboardPage() {
   }
 
 
-  const percentage =
-    usage?.percentage ||
-    0;
-
-
-  const sectionTitle =
-    section === "drive"
-      ? currentFolder?.name ||
-        "My Drive"
-      : section === "starred"
-        ? "Starred"
-        : section === "recent"
-          ? "Recent"
-          : section === "shared"
-            ? "Shared with me"
-            : section === "trash"
-              ? "Trash"
-              : "Search results";
-
+  /* =======================================================
+     MAIN UI
+  ======================================================= */
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
@@ -1187,17 +1354,20 @@ export default function DashboardPage() {
             SIDEBAR
         ================================================= */}
 
-        <aside className="hidden md:flex w-72 bg-white border-r border-slate-200 flex-col">
+        <aside
+          className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] flex flex-col bg-white border-r border-slate-200 p-5 transform transition-transform duration-300 lg:static lg:z-auto lg:w-64 lg:max-w-none lg:translate-x-0 ${
+            mobileSidebarOpen
+              ? "translate-x-0"
+              : "-translate-x-full"
+          }`}
+        >
 
-          <div className="p-6 border-b border-slate-100">
+          <div className="flex items-center justify-between gap-3 mb-8">
 
             <div className="flex items-center gap-3">
 
-              <div className="w-11 h-11 rounded-2xl bg-slate-900 flex items-center justify-center shadow-sm">
-                <Cloud
-                  className="text-white"
-                  size={23}
-                />
+              <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center">
+                <Cloud size={21} />
               </div>
 
               <div>
@@ -1212,28 +1382,21 @@ export default function DashboardPage() {
 
             </div>
 
-          </div>
-
-
-          <div className="p-5">
 
             <button
-              onClick={
-                handleCreateFolder
+              onClick={() =>
+                setMobileSidebarOpen(false)
               }
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-900 text-white py-3 font-medium hover:bg-slate-800 transition shadow-sm"
+              className="lg:hidden p-2 rounded-lg hover:bg-slate-100"
+              aria-label="Close sidebar"
             >
-              <FolderPlus
-                size={18}
-              />
-
-              New folder
+              <X size={20} />
             </button>
 
           </div>
 
 
-          <nav className="px-4 space-y-1">
+          <nav className="space-y-1">
 
             <SidebarButton
               active={
@@ -1313,31 +1476,52 @@ export default function DashboardPage() {
           </nav>
 
 
-          <div className="mt-auto p-5">
+          <div className="mt-auto">
 
-            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 mb-5">
+            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 mb-4">
 
-              <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center gap-3 mb-3">
 
-                <HardDrive
-                  size={17}
-                />
+                <div className="w-10 h-10 rounded-full bg-slate-900 text-white flex items-center justify-center text-sm font-semibold">
+                  {getInitials(
+                    userName
+                  )}
+                </div>
 
-                <span className="text-sm font-semibold">
+                <div className="min-w-0">
+
+                  <p className="font-medium truncate">
+                    {userName}
+                  </p>
+
+                  <p className="text-xs text-slate-500 truncate">
+                    {user?.email}
+                  </p>
+
+                </div>
+
+              </div>
+
+
+              <div className="flex items-center justify-between text-xs mb-2">
+
+                <span className="text-slate-500">
                   Storage
+                </span>
+
+                <span className="font-medium">
+                  {usagePercentage}%
                 </span>
 
               </div>
 
-              <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+              <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
 
                 <div
-                  className="h-full bg-slate-900 transition-all"
+                  className="h-full bg-slate-900 rounded-full transition-all"
                   style={{
-                    width: `${Math.min(
-                      100,
-                      percentage
-                    )}%`
+                    width:
+                      `${usagePercentage}%`
                   }}
                 />
 
@@ -1345,73 +1529,65 @@ export default function DashboardPage() {
 
               <p className="text-xs text-slate-500 mt-2">
                 {formatBytes(
-                  usage?.usedBytes
+                  usageBytes
                 )}{" "}
                 of{" "}
                 {formatBytes(
-                  usage?.limitBytes
+                  limitBytes
                 )}
               </p>
 
             </div>
 
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-
-              <div className="flex items-center gap-3 mb-4">
-
-                <div className="w-10 h-10 rounded-full bg-slate-900 text-white flex items-center justify-center font-semibold text-sm flex-shrink-0">
-                  {getInitials(
-                    user.name
-                  )}
-                </div>
-
-                <div className="min-w-0">
-
-                  <p className="font-semibold truncate">
-                    {user.name ||
-                      "CloudNest User"}
-                  </p>
-
-                  <p className="text-xs text-slate-500 truncate">
-                    {user.email}
-                  </p>
-
-                </div>
-
-              </div>
-
-
-              <button
-                onClick={async () => {
-                  await logout();
-                  router.push(
-                    "/login"
-                  );
-                }}
-                className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
-              >
-                <LogOut
-                  size={17}
-                />
-
-                Sign out
-              </button>
-
-            </div>
+            <button
+              onClick={
+                handleLogout
+              }
+              className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition"
+            >
+              <LogOut size={17} />
+              Sign out
+            </button>
 
           </div>
 
         </aside>
 
+        {/* MOBILE SIDEBAR OVERLAY */}
+
+        {mobileSidebarOpen && (
+          <button
+            onClick={() =>
+              setMobileSidebarOpen(false)
+            }
+            className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+            aria-label="Close sidebar"
+          />
+        )}
+
 
         {/* =================================================
-            MAIN
+            MAIN CONTENT
         ================================================= */}
 
         <section className="flex-1 min-w-0">
 
+          {/* =================================================
+              TOP BAR
+          ================================================= */}
+
           <header className="bg-white border-b border-slate-200 px-4 md:px-8 py-4">
+
+            <button
+              onClick={() =>
+                setMobileSidebarOpen(true)
+              }
+              className="lg:hidden mb-3 w-10 h-10 rounded-xl border border-slate-200 bg-white flex items-center justify-center hover:bg-slate-50"
+              aria-label="Open sidebar"
+            >
+              <Menu size={20} />
+            </button>
 
             <div className="flex flex-col lg:flex-row gap-4 lg:items-center lg:justify-between">
 
@@ -1486,10 +1662,16 @@ export default function DashboardPage() {
           </header>
 
 
-          <div className="p-4 md:p-8">
+          {/* =================================================
+              CONTENT
+          ================================================= */}
+
+          <div className="px-4 sm:px-6 lg:px-8 py-6 max-w-[1600px] mx-auto">
+
+            {/* ERROR */}
 
             {error && (
-              <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between">
+              <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between gap-3">
 
                 <span>
                   {error}
@@ -1522,7 +1704,7 @@ export default function DashboardPage() {
 
                   <p className="text-sm text-slate-500 mt-1">
                     {section === "trash"
-                      ? "Files you have deleted"
+                      ? "Files and Folders you have deleted"
                       : section === "starred"
                         ? "Your starred files"
                         : section === "recent"
@@ -1543,6 +1725,11 @@ export default function DashboardPage() {
 
                   <div className="relative">
 
+                    <ArrowUpDown
+                      size={16}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+                    />
+
                     <select
                       value={sort}
                       onChange={(event) =>
@@ -1550,8 +1737,17 @@ export default function DashboardPage() {
                           event.target.value
                         )
                       }
-                      className="appearance-none pl-9 pr-9 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium outline-none hover:bg-slate-50 cursor-pointer"
+                      className="appearance-none pl-9 pr-8 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium outline-none hover:bg-slate-50 cursor-pointer"
                     >
+
+                      <option value="updated-desc">
+                        Newest
+                      </option>
+
+                      <option value="updated-asc">
+                        Oldest
+                      </option>
+
                       <option value="name-asc">
                         Name: A → Z
                       </option>
@@ -1560,70 +1756,78 @@ export default function DashboardPage() {
                         Name: Z → A
                       </option>
 
-                      <option value="created-desc">
-                        Created: Newest
-                      </option>
-
-                      <option value="created-asc">
-                        Created: Oldest
-                      </option>
-
-                      <option value="modified-desc">
-                        Modified: Newest
-                      </option>
-
-                      <option value="modified-asc">
-                        Modified: Oldest
+                      <option value="size-asc">
+                        Size: Small → Large
                       </option>
 
                       <option value="size-desc">
-                        Size: Largest
+                        Size: Large → Small
                       </option>
 
-                      <option value="size-asc">
-                        Size: Smallest
-                      </option>
                     </select>
-
-                    <ArrowUpDown
-                      size={16}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500"
-                    />
 
                   </div>
 
 
+                  {/* NEW FOLDER */}
+
+                  {section === "drive" && (
+                    <button
+                      onClick={
+                        handleCreateFolder
+                      }
+                      className="hidden sm:flex items-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium hover:bg-slate-50"
+                    >
+                      <FolderPlus
+                        size={17}
+                      />
+                      New
+                    </button>
+                  )}
+
+
                   {/* VIEW */}
 
-                  <button
-                    onClick={() =>
-                      setView("grid")
-                    }
-                    className={`p-2.5 rounded-lg border ${
-                      view === "grid"
-                        ? "bg-slate-900 text-white border-slate-900"
-                        : "bg-white border-slate-200 hover:bg-slate-50"
-                    }`}
-                    aria-label="Grid view"
-                  >
-                    <Grid2X2
-                      size={18}
-                    />
-                  </button>
+                  <div className="flex items-center border border-slate-200 bg-white rounded-xl overflow-hidden">
 
-                  <button
-                    onClick={() =>
-                      setView("list")
-                    }
-                    className={`p-2.5 rounded-lg border ${
-                      view === "list"
-                        ? "bg-slate-900 text-white border-slate-900"
-                        : "bg-white border-slate-200 hover:bg-slate-50"
-                    }`}
-                    aria-label="List view"
-                  >
-                    <List size={18} />
-                  </button>
+                    <button
+                      onClick={() =>
+                        setView(
+                          "grid"
+                        )
+                      }
+                      className={`p-2.5 ${
+                        view === "grid"
+                          ? "bg-slate-900 text-white"
+                          : "hover:bg-slate-50"
+                      }`}
+                      aria-label="Grid view"
+                    >
+                      <Grid2X2
+                        size={18}
+                      />
+                    </button>
+
+
+                    <button
+                      onClick={() =>
+                        setView(
+                          "list"
+                        )
+                      }
+                      className={`p-2.5 ${
+                        view === "list"
+                          ? "bg-slate-900 text-white"
+                          : "hover:bg-slate-50"
+                      }`}
+                      aria-label="List view"
+                    >
+                      <List
+                        size={18}
+                      />
+                    </button>
+
+                  </div>
 
                 </div>
 
@@ -1632,13 +1836,17 @@ export default function DashboardPage() {
             </div>
 
 
-            {/* BREADCRUMBS */}
+            {/* =================================================
+                BREADCRUMBS
+            ================================================= */}
 
             {section === "drive" && (
               <div className="mb-5 flex items-center gap-2 text-sm text-slate-500 overflow-x-auto">
 
                 <button
-                  onClick={goHome}
+                  onClick={
+                    goHome
+                  }
                   className="font-medium hover:text-slate-900 whitespace-nowrap"
                 >
                   My Drive
@@ -1647,9 +1855,12 @@ export default function DashboardPage() {
                 {data.path.map(
                   (item) => (
                     <span
-                      key={item.id}
+                      key={
+                        item.id
+                      }
                       className="flex items-center gap-2 whitespace-nowrap"
                     >
+
                       <ChevronRight
                         size={15}
                       />
@@ -1673,7 +1884,9 @@ export default function DashboardPage() {
             )}
 
 
-            {/* UPLOAD */}
+            {/* =================================================
+                UPLOAD
+            ================================================= */}
 
             {section === "drive" && (
               <div className="mb-8">
@@ -1692,7 +1905,9 @@ export default function DashboardPage() {
             )}
 
 
-            {/* LOADING */}
+            {/* =================================================
+                LOADING
+            ================================================= */}
 
             {loadingData ? (
               <div className="py-20 text-center">
@@ -1727,8 +1942,7 @@ export default function DashboardPage() {
 
                       <span className="text-xs text-slate-500">
                         {sortedFolders.length}{" "}
-                        {sortedFolders.length ===
-                        1
+                        {sortedFolders.length === 1
                           ? "folder"
                           : "folders"}
                       </span>
@@ -1736,91 +1950,251 @@ export default function DashboardPage() {
                     </div>
 
 
-                    <div
-                      className={
-                        view === "grid"
-                          ? "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"
-                          : "space-y-2"
-                      }
-                    >
+                    {/* ===============================
+                        GRID FOLDERS
+                    =============================== */}
 
-                      {sortedFolders.map(
-                        (folder) => (
-                          <div
-                            key={folder.id}
-                            className="group bg-white border border-slate-200 rounded-2xl p-4 hover:border-slate-400 hover:shadow-sm transition"
-                          >
+                    {view === "grid" ? (
 
-                            <button
-                              onClick={() =>
-                                openFolder(
-                                  folder
-                                )
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+
+                        {sortedFolders.map(
+                          (folder) => (
+                            <div
+                              key={
+                                folder.id
                               }
-                              className="w-full text-left"
+                              className="group bg-white border border-slate-200 rounded-2xl p-4 hover:border-slate-300 hover:shadow-sm transition"
                             >
 
-                              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mb-3">
-                                <Folder
-                                  size={23}
-                                />
-                              </div>
-
-                              <p className="font-semibold truncate">
-                                {folder.name}
-                              </p>
-
-                              <p className="text-xs text-slate-500 mt-1">
-                                Updated{" "}
-                                {formatDate(
-                                  getModifiedDate(
-                                    folder
-                                  )
-                                )}
-                              </p>
-
-                            </button>
-
-
-                            <div className="flex items-center justify-end gap-1 mt-3">
-
                               <button
-                                onClick={() =>
-                                  handleRename({
-                                    ...folder,
-                                    kind: "folder"
-                                  })
-                                }
-                                className="p-2 rounded-lg hover:bg-slate-100"
-                                title="Rename"
-                              >
-                                <Pencil
-                                  size={15}
-                                />
+  onClick={() => {
+    if (section !== "trash") {
+      openFolder(
+        folder
+      );
+    }
+  }}
+  className="w-full text-left"
+>
+
+                                <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mb-4">
+                                  <Folder
+                                    size={25}
+                                  />
+                                </div>
+
+                                <p className="font-semibold truncate">
+                                  {
+                                    folder.name
+                                  }
+                                </p>
+
+                                <p className="text-xs text-slate-500 mt-1">
+                                  Updated{" "}
+                                  {formatDate(
+                                    folder.updated_at ||
+                                      folder.created_at
+                                  )}
+                                </p>
+
                               </button>
 
+
+                              <div className="flex items-center justify-end gap-1 mt-4 pt-3 border-t border-slate-100">
+
+  {section === "trash" ? (
+
+    <>
+      <button
+        onClick={() =>
+          handleRestore({
+            ...folder,
+            kind: "folder"
+          })
+        }
+        className="p-2 rounded-lg hover:bg-slate-100"
+        title="Restore"
+      >
+        <RotateCcw size={16} />
+      </button>
+
+      <button
+        onClick={() =>
+          handlePermanentDeleteFolder(
+            folder
+          )
+        }
+        className="p-2 rounded-lg hover:bg-red-50 text-red-600"
+        title="Delete permanently"
+      >
+        <Trash size={16} />
+      </button>
+    </>
+
+  ) : (
+
+    <>
+      <button
+  onClick={() =>
+    handleStar({
+      ...folder,
+      kind: "folder"
+    })
+  }
+  className="p-2 rounded-lg hover:bg-slate-100"
+  title={
+    folder.starred
+      ? "Unstar"
+      : "Star"
+  }
+>
+  <Star
+    size={16}
+    fill={
+      folder.starred
+        ? "currentColor"
+        : "none"
+    }
+  />
+</button>
+      <button
+        onClick={() =>
+          handleRename({
+            ...folder,
+            kind: "folder"
+          })
+        }
+        className="p-2 rounded-lg hover:bg-slate-100"
+        title="Rename"
+      >
+        <Pencil size={16} />
+      </button>
+
+      <button
+        onClick={() =>
+          handleDelete({
+            ...folder,
+            kind: "folder"
+          })
+        }
+        className="p-2 rounded-lg hover:bg-red-50 text-red-600"
+        title="Move to trash"
+      >
+        <Trash size={16} />
+      </button>
+    </>
+
+  )}
+
+</div>
+
+                            </div>
+                          )
+                        )}
+
+                      </div>
+
+                    ) : (
+
+                      /* ===============================
+                         LIST FOLDERS
+                      =============================== */
+
+                      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+
+                        <div className="hidden sm:grid grid-cols-[minmax(220px,1fr)_130px_160px_48px] gap-4 px-5 py-3 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+
+                          <span>
+                            Name
+                          </span>
+
+                          <span>
+                            Type
+                          </span>
+
+                          <span>
+                            Modified
+                          </span>
+
+                          <span />
+
+                        </div>
+
+
+                        {sortedFolders.map(
+                          (folder) => (
+                            <div
+                              key={
+                                folder.id
+                              }
+                              className="grid grid-cols-[minmax(0,1fr)_48px] sm:grid-cols-[minmax(220px,1fr)_130px_160px_48px] gap-4 items-center px-4 sm:px-5 py-3.5 border-b border-slate-100 last:border-b-0 hover:bg-slate-50 transition"
+                            >
+
+                              <button
+  onClick={() => {
+    if (section !== "trash") {
+      openFolder(
+        folder
+      );
+    }
+  }}
+  className="flex items-center gap-3 min-w-0 text-left"
+>
+
+                                <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+
+                                  <Folder
+                                    size={19}
+                                  />
+
+                                </div>
+
+                                <span className="font-medium truncate">
+                                  {
+                                    folder.name
+                                  }
+                                </span>
+
+                              </button>
+
+
+                              <span className="hidden sm:block text-sm text-slate-500">
+                                Folder
+                              </span>
+
+
+                              <span className="hidden sm:block text-sm text-slate-500">
+                                {formatDate(
+                                  folder.updated_at ||
+                                    folder.created_at
+                                )}
+                              </span>
+
+
                               <button
                                 onClick={() =>
-                                  handleDelete({
+                                  setSelected({
                                     ...folder,
                                     kind: "folder"
                                   })
                                 }
-                                className="p-2 rounded-lg hover:bg-red-50 text-red-600"
-                                title="Move to trash"
+                                className="justify-self-end p-2 rounded-lg hover:bg-slate-100"
+                                title="More options"
+                                aria-label={`More options for ${folder.name}`}
                               >
-                                <Trash
-                                  size={15}
+                                <MoreVertical
+                                  size={18}
                                 />
                               </button>
 
                             </div>
+                          )
+                        )}
 
-                          </div>
-                        )
-                      )}
+                      </div>
 
-                    </div>
+                    )}
 
                   </section>
                 )}
@@ -1843,8 +2217,7 @@ export default function DashboardPage() {
 
                       <span className="text-xs text-slate-500">
                         {sortedFiles.length}{" "}
-                        {sortedFiles.length ===
-                        1
+                        {sortedFiles.length === 1
                           ? "file"
                           : "files"}
                       </span>
@@ -1852,52 +2225,286 @@ export default function DashboardPage() {
                     </div>
 
 
-                    <div
-                      className={
-                        view === "grid"
-                          ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
-                          : "space-y-2"
-                      }
-                    >
+                    {/* =================================================
+                        GRID FILES
+                    ================================================= */}
 
-                      {sortedFiles.map(
-                        (file) => (
-                          <div
-                            key={file.id}
-                            className={`bg-white border border-slate-200 rounded-2xl p-4 hover:border-slate-400 hover:shadow-sm transition ${
-                              section === "trash"
-                                ? "border-red-100"
-                                : ""
-                            }`}
-                          >
+                    {view === "grid" ? (
 
-                            <div className="flex items-start justify-between gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+
+                        {sortedFiles.map(
+                          (file) => (
+                            <div
+                              key={
+                                file.id
+                              }
+                              className="group bg-white border border-slate-200 rounded-2xl p-4 hover:border-slate-300 hover:shadow-sm transition"
+                            >
+
+                              <div className="flex items-start justify-between gap-3">
+
+                                <button
+                                  onClick={() =>
+                                    section === "trash"
+                                      ? null
+                                      : handleOpenFile(
+                                          file
+                                        )
+                                  }
+                                  className="flex items-center gap-3 min-w-0 text-left flex-1"
+                                >
+
+                                  <div className="w-11 h-11 rounded-xl bg-slate-100 flex items-center justify-center flex-shrink-0">
+
+                                    <FileIcon
+                                      type={
+                                        file.mime_type
+                                      }
+                                    />
+
+                                  </div>
+
+
+                                  <div className="min-w-0">
+
+                                    <p className="font-semibold truncate">
+                                      {
+                                        file.name
+                                      }
+                                    </p>
+
+                                    <p className="text-xs text-slate-500 mt-1">
+                                      {formatBytes(
+                                        getSize(
+                                          file
+                                        )
+                                      )}
+                                    </p>
+
+                                  </div>
+
+                                </button>
+
+
+                                <button
+                                  onClick={() =>
+                                    setSelected({
+                                      ...file,
+                                      kind: "file"
+                                    })
+                                  }
+                                  className="p-2 rounded-lg hover:bg-slate-100 flex-shrink-0"
+                                  title="More options"
+                                >
+                                  <MoreVertical
+                                    size={17}
+                                  />
+                                </button>
+
+                              </div>
+
+
+                              <div className="flex items-center justify-between mt-5 pt-3 border-t border-slate-100">
+
+                                <span className="text-xs text-slate-500">
+                                  {formatDate(
+                                    file.updated_at ||
+                                      file.created_at
+                                  )}
+                                </span>
+
+
+                                <div className="flex items-center gap-1">
+
+                                  {section !== "trash" && (
+                                    <button
+                                      onClick={() =>
+                                        handleStar(
+                                          file
+                                        )
+                                      }
+                                      disabled={
+                                        actionLoading
+                                      }
+                                      className={`p-2 rounded-lg hover:bg-slate-100 ${
+                                        file.starred
+                                          ? "text-slate-900"
+                                          : "text-slate-400"
+                                      }`}
+                                      title={
+                                        file.starred
+                                          ? "Unstar"
+                                          : "Star"
+                                      }
+                                    >
+                                      <Star
+                                        size={17}
+                                        fill={
+                                          file.starred
+                                            ? "currentColor"
+                                            : "none"
+                                        }
+                                      />
+                                    </button>
+                                  )}
+
+
+                                  {section === "trash" ? (
+
+                                    <>
+                                      <button
+                                        onClick={() =>
+                                          handleRestore(
+                                            file
+                                          )
+                                        }
+                                        className="p-2 rounded-lg hover:bg-slate-100"
+                                        title="Restore"
+                                      >
+                                        <RotateCcw
+                                          size={17}
+                                        />
+                                      </button>
+
+                                      <button
+                                        onClick={() =>
+                                          handlePermanentDelete(
+                                            file
+                                          )
+                                        }
+                                        className="p-2 rounded-lg hover:bg-red-50 text-red-600"
+                                        title="Delete permanently"
+                                      >
+                                        <Trash
+                                          size={17}
+                                        />
+                                      </button>
+                                    </>
+
+                                  ) : (
+
+                                    <>
+                                      <button
+                                        onClick={() =>
+                                          handleOpenFile(
+                                            file
+                                          )
+                                        }
+                                        className="p-2 rounded-lg hover:bg-slate-100"
+                                        title="Open"
+                                      >
+                                        <Eye
+                                          size={17}
+                                        />
+                                      </button>
+
+                                      <button
+                                        onClick={() =>
+                                          handleDownload(
+                                            file
+                                          )
+                                        }
+                                        className="p-2 rounded-lg hover:bg-slate-100"
+                                        title="Download"
+                                      >
+                                        <Download
+                                          size={17}
+                                        />
+                                      </button>
+
+                                    </>
+
+                                  )}
+
+                                </div>
+
+                              </div>
+
+                            </div>
+                          )
+                        )}
+
+                      </div>
+
+                    ) : (
+
+                      /* =================================================
+                          LIST FILES
+                      ================================================= */
+
+                      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+
+                        {/* HEADER */}
+
+                        <div className="hidden sm:grid grid-cols-[minmax(220px,1fr)_120px_120px_160px_48px] gap-4 px-5 py-3 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+
+                          <span>
+                            Name
+                          </span>
+
+                          <span>
+                            Type
+                          </span>
+
+                          <span>
+                            Size
+                          </span>
+
+                          <span>
+                            Modified
+                          </span>
+
+                          <span />
+
+                        </div>
+
+
+                        {/* ROWS */}
+
+                        {sortedFiles.map(
+                          (file) => (
+                            <div
+                              key={
+                                file.id
+                              }
+                              className="grid grid-cols-[minmax(0,1fr)_48px] sm:grid-cols-[minmax(220px,1fr)_120px_120px_160px_48px] gap-4 items-center px-4 sm:px-5 py-3.5 border-b border-slate-100 last:border-b-0 hover:bg-slate-50 transition"
+                            >
+
+                              {/* NAME */}
 
                               <button
                                 onClick={() =>
-                                  handleOpenFile(
-                                    file
-                                  )
+                                  section === "trash"
+                                    ? null
+                                    : handleOpenFile(
+                                        file
+                                      )
                                 }
-                                className="flex items-center gap-3 min-w-0 text-left flex-1"
-                                title="Open file"
+                                className="flex items-center gap-3 min-w-0 text-left"
                               >
 
-                                <div className="w-11 h-11 rounded-xl bg-slate-100 flex items-center justify-center flex-shrink-0">
+                                <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+
                                   <FileIcon
                                     type={
                                       file.mime_type
                                     }
+                                    size={19}
                                   />
+
                                 </div>
+
 
                                 <div className="min-w-0">
 
-                                  <p className="font-semibold truncate hover:underline">
-                                    {file.name}
+                                  <p className="font-medium truncate">
+                                    {
+                                      file.name
+                                    }
                                   </p>
 
-                                  <p className="text-xs text-slate-500 mt-1">
+                                  <p className="sm:hidden text-xs text-slate-500 mt-0.5">
                                     {formatBytes(
                                       getSize(
                                         file
@@ -1910,157 +2517,62 @@ export default function DashboardPage() {
                               </button>
 
 
-                              {section !==
-                                "trash" && (
-                                <button
-                                  onClick={() =>
-                                    setSelected(
-                                      file
-                                    )
-                                  }
-                                  className="p-2 rounded-lg hover:bg-slate-100 flex-shrink-0"
-                                >
-                                  <MoreVertical
-                                    size={17}
-                                  />
-                                </button>
-                              )}
+                              {/* TYPE */}
+
+                              <span className="hidden sm:block text-sm text-slate-500 truncate">
+                                {file.mime_type ||
+                                  "File"}
+                              </span>
+
+
+                              {/* SIZE */}
+
+                              <span className="hidden sm:block text-sm text-slate-500">
+                                {formatBytes(
+                                  getSize(
+                                    file
+                                  )
+                                )}
+                              </span>
+
+
+                              {/* MODIFIED */}
+
+                              <span className="hidden sm:block text-sm text-slate-500">
+                                {formatDate(
+                                  file.updated_at ||
+                                    file.created_at
+                                )}
+                              </span>
+
+
+                              {/* ONLY ACTION IN LIST */}
+
+                              <button
+                                onClick={() =>
+                                  setSelected({
+                                    ...file,
+                                    kind: "file"
+                                  })
+                                }
+                                className="justify-self-end p-2 rounded-lg hover:bg-slate-100"
+                                title="More options"
+                                aria-label={`More options for ${file.name}`}
+                              >
+
+                                <MoreVertical
+                                  size={18}
+                                />
+
+                              </button>
 
                             </div>
+                          )
+                        )}
 
+                      </div>
 
-                            {section === "trash" ? (
-                              <div className="flex items-center justify-end gap-2 mt-4">
-
-                                <button
-                                  onClick={() =>
-                                    handleRestore(
-                                      file
-                                    )
-                                  }
-                                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-medium"
-                                >
-                                  <RotateCcw
-                                    size={15}
-                                  />
-
-                                  Restore
-                                </button>
-
-                                <button
-                                  onClick={() =>
-                                    handlePermanentDelete(
-                                      file
-                                    )
-                                  }
-                                  className="p-2 rounded-lg hover:bg-red-50 text-red-600"
-                                  title="Delete permanently"
-                                >
-                                  <Trash2
-                                    size={17}
-                                  />
-                                </button>
-
-                              </div>
-                            ) : (
-                              <div className="flex items-center justify-between mt-4">
-
-                                <button
-                                  disabled={
-                                    actionLoading
-                                  }
-                                  onClick={() =>
-                                    handleStar(
-                                      file
-                                    )
-                                  }
-                                  className="p-2 rounded-lg hover:bg-slate-100 disabled:opacity-50"
-                                  title={
-                                    file.starred
-                                      ? "Unstar"
-                                      : "Star"
-                                  }
-                                >
-                                  <Star
-                                    size={17}
-                                    fill={
-                                      file.starred
-                                        ? "currentColor"
-                                        : "none"
-                                    }
-                                  />
-                                </button>
-
-
-                                <button
-                                  onClick={() =>
-                                    handleOpenFile(
-                                      file
-                                    )
-                                  }
-                                  className="p-2 rounded-lg hover:bg-slate-100"
-                                  title="Open"
-                                >
-                                  <Eye
-                                    size={17}
-                                  />
-                                </button>
-
-
-                                <button
-                                  onClick={() =>
-                                    handleDownload(
-                                      file
-                                    )
-                                  }
-                                  className="p-2 rounded-lg hover:bg-slate-100"
-                                  title="Download"
-                                >
-                                  <Download
-                                    size={17}
-                                  />
-                                </button>
-
-
-                                <button
-                                  onClick={() =>
-                                    handleRename({
-                                      ...file,
-                                      kind: "file"
-                                    })
-                                  }
-                                  className="p-2 rounded-lg hover:bg-slate-100"
-                                  title="Rename"
-                                >
-                                  <Pencil
-                                    size={17}
-                                  />
-                                </button>
-
-
-                                <button
-                                  onClick={() =>
-                                    handleDelete({
-                                      ...file,
-                                      kind: "file"
-                                    })
-                                  }
-                                  className="p-2 rounded-lg hover:bg-red-50 text-red-600"
-                                  title="Move to trash"
-                                >
-                                  <Trash
-                                    size={17}
-                                  />
-                                </button>
-
-                              </div>
-                            )}
-
-                          </div>
-                        )
-                      )}
-
-                    </div>
+                    )}
 
                   </section>
                 )}
@@ -2105,6 +2617,7 @@ export default function DashboardPage() {
 
                       </div>
 
+
                       <h3 className="font-semibold text-lg">
 
                         {section === "trash"
@@ -2118,6 +2631,7 @@ export default function DashboardPage() {
                                 : "Nothing here yet"}
 
                       </h3>
+
 
                       <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
 
@@ -2147,27 +2661,46 @@ export default function DashboardPage() {
 
 
       {/* =====================================================
-          FILE ACTION MODAL
+          ITEM ACTION MODAL
       ===================================================== */}
 
       {selected && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+          onClick={() =>
+            setSelected(null)
+          }
+        >
 
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
+          <div
+            className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
 
             <div className="flex items-center justify-between mb-5">
 
               <div>
 
                 <p className="text-xs text-slate-500">
-                  File actions
+                  {selected.kind === "folder"
+                    ? "Folder actions"
+                    : section === "trash"
+                      ? "Trash actions"
+                      : "File actions"}
                 </p>
 
                 <h3 className="font-semibold text-lg mt-1">
-                  Manage file
+                  {selected.kind === "folder"
+                    ? "Manage folder"
+                    : section === "trash"
+                      ? "Manage deleted file"
+                      : "Manage file"}
                 </h3>
 
               </div>
+
 
               <button
                 onClick={() =>
@@ -2183,142 +2716,459 @@ export default function DashboardPage() {
 
             <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
 
-              <p className="font-semibold break-all">
-                {selected.name}
-              </p>
+              <div className="flex items-center gap-3">
 
-              <p className="text-xs text-slate-500 mt-1">
-                {formatBytes(
-                  getSize(selected)
-                )}
-              </p>
+                <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center flex-shrink-0">
+
+                  {selected.kind === "folder" ? (
+                    <Folder size={20} />
+                  ) : (
+                    <FileIcon
+                      type={
+                        selected.mime_type
+                      }
+                      size={20}
+                    />
+                  )}
+
+                </div>
+
+
+                <div className="min-w-0">
+
+                  <p className="font-semibold break-all">
+                    {selected.name}
+                  </p>
+
+                  <p className="text-xs text-slate-500 mt-1">
+                    {selected.kind === "folder"
+                      ? "Folder"
+                      : formatBytes(
+                          getSize(
+                            selected
+                          )
+                        )}
+                  </p>
+
+                </div>
+
+              </div>
 
             </div>
 
 
             <div className="space-y-1 mt-5">
 
-              <ModalAction
-                icon={<Eye size={18} />}
-                label="Open / Preview"
-                onClick={() => {
-                  const file =
-                    selected;
+              {/* ===========================
+                  TRASH ACTIONS
+              =========================== */}
 
-                  setSelected(null);
+              {section === "trash" &&
+              selected.kind !== "folder" ? (
 
-                  handleOpenFile(
-                    file
-                  );
-                }}
-              />
+                <>
 
+                  <ModalAction
+                    icon={
+                      <RotateCcw
+                        size={18}
+                      />
+                    }
+                    label="Restore"
+                    onClick={() => {
+                      const file =
+                        selected;
 
-              <ModalAction
-                icon={
-                  <Download
-                    size={18}
+                      setSelected(null);
+
+                      handleRestore(
+                        file
+                      );
+                    }}
                   />
-                }
-                label="Download"
-                onClick={() => {
-                  const file =
-                    selected;
-
-                  setSelected(null);
-
-                  handleDownload(
-                    file
-                  );
-                }}
-              />
 
 
-              <ModalAction
-                icon={
-                  <Pencil
-                    size={18}
+                  <ModalAction
+                    icon={
+                      <Trash2
+                        size={18}
+                      />
+                    }
+                    label="Delete permanently"
+                    onClick={() => {
+                      const file =
+                        selected;
+
+                      setSelected(null);
+
+                      handlePermanentDelete(
+                        file
+                      );
+                    }}
+                    danger
                   />
-                }
-                label="Rename"
-                onClick={() => {
-                  const file =
-                    selected;
 
-                  setSelected(null);
+                </>
 
-                  handleRename({
-                    ...file,
-                    kind: "file"
-                  });
-                }}
-              />
+              ) : selected.kind === "folder" ? (
 
+                /* ===========================
+     FOLDER ACTIONS
+  =========================== */
 
-              <ModalAction
-                icon={
-                  <Share2
-                    size={18}
+  section === "trash" ? (
+
+    <>
+
+      <ModalAction
+        icon={
+          <RotateCcw
+            size={18}
+          />
+        }
+        label="Restore"
+        onClick={async () => {
+          const folder =
+            selected;
+
+          setSelected(null);
+
+          try {
+            await restoreFolder(
+              folder.id
+            );
+
+            await showSection(
+              "trash"
+            );
+
+            await loadDashboard();
+          } catch (err) {
+            setError(
+              err.message ||
+                "Unable to restore folder."
+            );
+          }
+        }}
+      />
+      
+
+      <ModalAction
+  icon={
+    <Trash2
+      size={18}
+    />
+  }
+  label="Delete permanently"
+  onClick={() => {
+    const folder =
+      selected;
+
+    setSelected(null);
+
+    handlePermanentDeleteFolder(
+      folder
+    );
+  }}
+  danger
+/>
+
+    </>
+
+  ) : (
+
+    <>
+
+      <ModalAction
+        icon={
+          <Folder
+            size={18}
+          />
+        }
+        label="Open folder"
+        onClick={() => {
+          const folder =
+            selected;
+
+          setSelected(null);
+
+          openFolder(
+            folder
+          );
+        }}
+      />
+<ModalAction
+  icon={
+    <Star
+      size={18}
+    />
+  }
+  label={
+    selected.starred
+      ? "Unstar"
+      : "Star"
+  }
+  onClick={() => {
+    const folder =
+      selected;
+
+    setSelected(null);
+
+    handleStar({
+      ...folder,
+      kind: "folder"
+    });
+  }}
+/>
+      <ModalAction
+        icon={
+          <Pencil
+            size={18}
+          />
+        }
+        label="Rename"
+        onClick={() => {
+          const folder =
+            selected;
+
+          setSelected(null);
+
+          handleRename({
+            ...folder,
+            kind: "folder"
+          });
+        }}
+      />
+      <ModalAction
+  icon={
+    <Share2
+      size={18}
+    />
+  }
+  label="Share with user"
+  onClick={() => {
+    const folder =
+      selected;
+
+    setSelected(null);
+
+    setModal({
+      type: "share",
+      resource: {
+        ...folder,
+        kind: "folder"
+      }
+    });
+  }}
+/>
+
+<ModalAction
+  icon={
+    <Link2
+      size={18}
+    />
+  }
+  label="Create share link"
+  onClick={() => {
+    const folder =
+      selected;
+
+    setSelected(null);
+
+    setModal({
+      type: "link",
+      resource: {
+        ...folder,
+        kind: "folder"
+      }
+    });
+  }}
+/>
+
+      <ModalAction
+        icon={
+          <Trash2
+            size={18}
+          />
+        }
+        label="Move to trash"
+        onClick={() => {
+          const folder =
+            selected;
+
+          setSelected(null);
+
+          handleDelete({
+            ...folder,
+            kind: "folder"
+          });
+        }}
+        danger
+      />
+
+    </>
+
+  )
+
+) : (
+
+                /* ===========================
+                   NORMAL FILE ACTIONS
+                =========================== */
+
+                <>
+
+                  <ModalAction
+                    icon={
+                      <Eye size={18} />
+                    }
+                    label="Open / Preview"
+                    onClick={() => {
+                      const file =
+                        selected;
+
+                      setSelected(null);
+
+                      handleOpenFile(
+                        file
+                      );
+                    }}
                   />
-                }
-                label="Share with user"
-                onClick={() => {
-                  const file =
-                    selected;
-
-                  setSelected(null);
-
-                  setShareModal({
-                    type: "share",
-                    resource:
-                      file
-                  });
-                }}
-              />
 
 
-              <ModalAction
-                icon={
-                  <Link2
-                    size={18}
+                  <ModalAction
+                    icon={
+                      <Download
+                        size={18}
+                      />
+                    }
+                    label="Download"
+                    onClick={() => {
+                      const file =
+                        selected;
+
+                      setSelected(null);
+
+                      handleDownload(
+                        file
+                      );
+                    }}
                   />
-                }
-                label="Create share link"
-                onClick={() => {
-                  const file =
-                    selected;
-
-                  setSelected(null);
-
-                  setShareModal({
-                    type: "link",
-                    resource:
-                      file
-                  });
-                }}
-              />
 
 
-              <button
-                onClick={() => {
-                  const file =
-                    selected;
+                  <ModalAction
+                    icon={
+                      <Star
+                        size={18}
+                      />
+                    }
+                    label={
+                      selected.starred
+                        ? "Unstar"
+                        : "Star"
+                    }
+                    onClick={() => {
+                      const file =
+                        selected;
 
-                  setSelected(null);
+                      setSelected(null);
 
-                  handleDelete({
-                    ...file,
-                    kind: "file"
-                  });
-                }}
-                className="w-full flex items-center gap-3 rounded-xl px-3 py-3 text-red-600 hover:bg-red-50 text-sm font-medium"
-              >
-                <Trash2
-                  size={18}
-                />
+                      handleStar(
+                        file
+                      );
+                    }}
+                  />
 
-                Move to trash
-              </button>
+
+                  <ModalAction
+                    icon={
+                      <Pencil
+                        size={18}
+                      />
+                    }
+                    label="Rename"
+                    onClick={() => {
+                      const file =
+                        selected;
+
+                      setSelected(null);
+
+                      handleRename({
+                        ...file,
+                        kind: "file"
+                      });
+                    }}
+                  />
+
+
+                  <ModalAction
+                    icon={
+                      <Share2
+                        size={18}
+                      />
+                    }
+                    label="Share with user"
+                    onClick={() => {
+                      const file =
+                        selected;
+
+                      setSelected(null);
+
+                      setModal({
+                        type: "share",
+                        resource:
+                          file
+                      });
+                    }}
+                  />
+
+
+                  <ModalAction
+                    icon={
+                      <Link2
+                        size={18}
+                      />
+                    }
+                    label="Create share link"
+                    onClick={() => {
+                      const file =
+                        selected;
+
+                      setSelected(null);
+
+                      setModal({
+                        type: "link",
+                        resource:
+                          file
+                      });
+                    }}
+                  />
+
+
+                  <ModalAction
+                    icon={
+                      <Trash2
+                        size={18}
+                      />
+                    }
+                    label="Move to trash"
+                    onClick={() => {
+                      const file =
+                        selected;
+
+                      setSelected(null);
+
+                      handleDelete({
+                        ...file,
+                        kind: "file"
+                      });
+                    }}
+                    danger
+                  />
+
+                </>
+
+              )}
 
             </div>
 
@@ -2332,13 +3182,13 @@ export default function DashboardPage() {
           SHARE MODAL
       ===================================================== */}
 
-      {shareModal && (
+      {modal && (
         <ShareModal
           modal={
-            shareModal
+            modal
           }
           onClose={() =>
-            setShareModal(
+            setModal(
               null
             )
           }
@@ -2390,11 +3240,13 @@ function SidebarButton({
           : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
       }`}
     >
+
       {icon}
 
       <span>
         {label}
       </span>
+
     </button>
   );
 }
@@ -2407,16 +3259,23 @@ function SidebarButton({
 function ModalAction({
   icon,
   label,
-  onClick
+  onClick,
+  danger = false
 }) {
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-3 rounded-xl px-3 py-3 hover:bg-slate-100 text-sm font-medium"
+      className={`w-full flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition ${
+        danger
+          ? "text-red-600 hover:bg-red-50"
+          : "hover:bg-slate-100"
+      }`}
     >
+
       {icon}
 
       {label}
+
     </button>
   );
 }
@@ -2435,30 +3294,36 @@ function ShareModal({
     setEmail
   ] = useState("");
 
+
   const [
     role,
     setRole
   ] = useState("viewer");
+
 
   const [
     password,
     setPassword
   ] = useState("");
 
+
   const [
     expiresAt,
     setExpiresAt
   ] = useState("");
+
 
   const [
     result,
     setResult
   ] = useState("");
 
+
   const [
     error,
     setError
   ] = useState("");
+
 
   const [
     submitting,
@@ -2473,11 +3338,21 @@ function ShareModal({
       setSubmitting(true);
 
 
-      if (modal.type === "link") {
+      if (
+        modal.type === "link"
+      ) {
+        const {
+          createLinkShare
+        } = await import(
+          "../../lib/api"
+        );
+
         const data =
           await createLinkShare({
             resourceType:
-              "file",
+  modal.resource.kind === "folder"
+    ? "folder"
+    : "file",
             resourceId:
               modal.resource.id,
             expiresAt:
@@ -2488,8 +3363,10 @@ function ShareModal({
               null
           });
 
+
         const fullUrl =
           `${window.location.origin}${data.url}`;
+
 
         setResult(
           fullUrl
@@ -2499,7 +3376,9 @@ function ShareModal({
       }
 
 
-      if (!email.trim()) {
+      if (
+        !email.trim()
+      ) {
         setError(
           "Enter a user email address."
         );
@@ -2508,13 +3387,23 @@ function ShareModal({
       }
 
 
+      const {
+        createShare,
+        findUser
+      } = await import(
+        "../../lib/api"
+      );
+
+
       const found =
         await findUser(
           email.trim()
         );
 
 
-      if (!found?.user) {
+      if (
+        !found?.user
+      ) {
         setError(
           "User not found."
         );
@@ -2524,19 +3413,22 @@ function ShareModal({
 
 
       await createShare({
-        resourceType:
-          "file",
-        resourceId:
-          modal.resource.id,
-        granteeUserId:
-          found.user.id,
-        role
-      });
+  resourceType:
+    modal.resource.kind === "folder"
+      ? "folder"
+      : "file",
+  resourceId:
+    modal.resource.id,
+  granteeUserId:
+    found.user.id,
+  role
+});
 
 
       setResult(
         "Resource shared successfully."
       );
+
     } catch (err) {
       setError(
         err.message ||
@@ -2549,9 +3441,17 @@ function ShareModal({
 
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div
+      className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+      onClick={onClose}
+    >
 
-      <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
+      <div
+        className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl"
+        onClick={(event) =>
+          event.stopPropagation()
+        }
+      >
 
         <div className="flex items-center justify-between mb-5">
 
@@ -2559,20 +3459,27 @@ function ShareModal({
 
             <p className="text-xs text-slate-500">
               {modal.type === "link"
-                ? "Sharing"
-                : "File sharing"}
+  ? "Sharing"
+  : modal.resource?.kind === "folder"
+    ? "Folder sharing"
+    : "File sharing"}
             </p>
 
             <h3 className="font-semibold text-lg mt-1">
               {modal.type === "link"
-                ? "Create share link"
-                : "Share file"}
+  ? "Create share link"
+  : modal.resource?.kind === "folder"
+    ? "Share folder"
+    : "Share file"}
             </h3>
 
           </div>
 
+
           <button
-            onClick={onClose}
+            onClick={
+              onClose
+            }
             className="p-2 rounded-lg hover:bg-slate-100"
           >
             <X size={19} />
@@ -2614,6 +3521,7 @@ function ShareModal({
               }
               className="w-full border border-slate-300 rounded-xl px-3 py-2.5"
             >
+
               <option value="viewer">
                 Viewer
               </option>
@@ -2621,6 +3529,7 @@ function ShareModal({
               <option value="editor">
                 Editor
               </option>
+
             </select>
 
           </>
@@ -2674,41 +3583,55 @@ function ShareModal({
           <div className="mt-4 rounded-xl bg-green-50 border border-green-200 text-green-700 text-sm px-3 py-3 break-all">
 
             <p className="font-medium mb-2">
-              Share link created:
+              {result.includes("http")
+                ? "Share link created:"
+                : "Success"}
             </p>
 
             <p>
               {result}
             </p>
 
-            <button
-              onClick={async () => {
-                await navigator.clipboard.writeText(
-                  result
-                );
-                setResult(
-                  `${result}\n\nCopied to clipboard.`
-                );
-              }}
-              className="mt-3 px-3 py-2 rounded-lg bg-white border border-green-200 text-green-700 text-xs font-medium"
-            >
-              Copy link
-            </button>
+
+            {result.includes(
+              "http"
+            ) && (
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(
+                    result
+                  );
+
+                  setResult(
+                    `${result}\n\nCopied to clipboard.`
+                  );
+                }}
+                className="mt-3 px-3 py-2 rounded-lg bg-white border border-green-200 text-green-700 text-xs font-medium"
+              >
+                Copy link
+              </button>
+            )}
 
           </div>
         )}
 
 
         <button
-          onClick={handleShare}
-          disabled={submitting}
+          onClick={
+            handleShare
+          }
+          disabled={
+            submitting
+          }
           className="w-full mt-5 rounded-xl bg-slate-900 text-white py-3 font-medium hover:bg-slate-800 disabled:opacity-50 transition"
         >
           {submitting
             ? "Working..."
             : modal.type === "link"
-              ? "Create link"
-              : "Share file"}
+  ? "Create link"
+  : modal.resource?.kind === "folder"
+    ? "Share folder"
+    : "Share file"}
         </button>
 
       </div>
@@ -2732,6 +3655,7 @@ function FilePreviewModal({
     file?.mimeType ||
     "";
 
+
   const url =
     file?.signedUrl;
 
@@ -2741,19 +3665,23 @@ function FilePreviewModal({
       "image/"
     );
 
+
   const isVideo =
     mime.startsWith(
       "video/"
     );
+
 
   const isAudio =
     mime.startsWith(
       "audio/"
     );
 
+
   const isPdf =
     mime ===
     "application/pdf";
+
 
   const isText =
     mime.startsWith(
@@ -2766,9 +3694,17 @@ function FilePreviewModal({
 
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
+      onClick={onClose}
+    >
 
-      <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[95vh] overflow-hidden shadow-2xl flex flex-col">
+      <div
+        className="bg-white rounded-2xl w-full max-w-6xl max-h-[95vh] overflow-hidden shadow-2xl flex flex-col"
+        onClick={(event) =>
+          event.stopPropagation()
+        }
+      >
 
         {/* HEADER */}
 
@@ -2791,6 +3727,7 @@ function FilePreviewModal({
               )}
 
             </div>
+
 
             <div className="min-w-0">
 
@@ -2815,7 +3752,7 @@ function FilePreviewModal({
               onClick={
                 onDownload
               }
-              className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium hover:bg-slate-50"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
             >
               <Download
                 size={16}
@@ -2823,6 +3760,7 @@ function FilePreviewModal({
 
               Download
             </button>
+
 
             <button
               onClick={
@@ -2843,7 +3781,11 @@ function FilePreviewModal({
         <div className="flex-1 overflow-auto bg-slate-100 min-h-[400px] flex items-center justify-center p-4">
 
           {!url ? (
-            <PreviewUnavailable />
+            <PreviewUnavailable
+              onDownload={
+                onDownload
+              }
+            />
           ) : isImage ? (
             <img
               src={url}
@@ -2926,15 +3868,14 @@ function PreviewUnavailable({
         This file type cannot be previewed directly in CloudNest.
       </p>
 
+
       {onDownload && (
         <button
           onClick={
             onDownload
           }
-          className="mt-5 flex items-center gap-2 mx-auto rounded-xl bg-slate-900 text-white px-4 py-2.5 text-sm font-medium"
+          className="mt-5 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
         >
-          <Download size={16} />
-
           Download file
         </button>
       )}

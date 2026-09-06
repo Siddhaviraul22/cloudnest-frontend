@@ -246,10 +246,14 @@ export const permanentlyDeleteFile = (
    TRASH
 ========================= */
 
-export const getTrash = () =>
-  apiRequest(
-    "/api/files/trash"
+export const getTrash = async () => {
+  return apiRequest(
+    "/api/files/trash",
+    {
+      method: "GET"
+    }
   );
+};
 
 /* =========================
    STARRED

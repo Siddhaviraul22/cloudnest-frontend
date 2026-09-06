@@ -511,33 +511,79 @@ export default function DashboardPage() {
   ======================================================= */
 
   const handleDelete = async (item) => {
-    if (
-      !window.confirm(
-        `Move "${item.name}" to trash?`
-      )
-    ) {
-      return;
-    }
+  if (
+    !window.confirm(
+      `Move "${item.name}" to trash?`
+    )
+  ) {
+    return;
+  }
 
-    try {
-      if (item.kind === "folder") {
-        await deleteFolder(
-          item.id
-        );
-      } else {
-        await deleteFile(
-          item.id
-        );
-      }
+  setError("");
+  setActionLoading(true);
 
-      await refreshCurrent();
-    } catch (err) {
-      setError(
-        err.message ||
-          "Unable to delete."
+  try {
+    if (item.kind === "folder") {
+      await deleteFolder(
+        item.id
+      );
+    } else {
+      await deleteFile(
+        item.id
       );
     }
-  };
+
+    /*
+     * Remove the item immediately
+     * from the current screen.
+     */
+    setData((current) => ({
+      ...current,
+      folders:
+        item.kind === "folder"
+          ? current.folders.filter(
+              (folder) =>
+                folder.id !== item.id
+            )
+          : current.folders,
+      files:
+        item.kind !== "folder"
+          ? current.files.filter(
+              (file) =>
+                file.id !== item.id
+            )
+          : current.files
+    }));
+
+    /*
+     * Refresh the current section
+     * so the server becomes the
+     * source of truth.
+     */
+    if (section === "drive") {
+      await loadDrive();
+    }
+
+    await loadDashboard();
+
+    /*
+     * If the user is in Trash,
+     * reload Trash itself.
+     */
+    if (section === "trash") {
+      await showSection(
+        "trash"
+      );
+    }
+  } catch (err) {
+    setError(
+      err.message ||
+        "Unable to delete."
+    );
+  } finally {
+    setActionLoading(false);
+  }
+};
 
 
   /* =======================================================

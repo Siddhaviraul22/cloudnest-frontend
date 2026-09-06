@@ -17,18 +17,6 @@ import {
   completeUpload
 } from "../lib/api";
 
-import * as tus from "tus-js-client";
-
-const STORAGE_BUCKET =
-  process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET ||
-  "cloudnest";
-
-const SUPABASE_URL =
-  process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-const CHUNK_SIZE =
-  10 * 1024 * 1024;
-
 const MAX_CONCURRENT_UPLOADS = 3;
 
 const formatBytes = (bytes) => {
@@ -57,11 +45,129 @@ const formatBytes = (bytes) => {
   ).toFixed(1)} ${units[index]}`;
 };
 
+const uploadToSignedUrl = (
+  file,
+  signedUrl,
+  uploadId,
+  updateUpload
+) => {
+  return new Promise(
+    (resolve, reject) => {
+      if (!signedUrl) {
+        reject(
+          new Error(
+            "Signed upload URL was not provided by the server"
+          )
+        );
+
+        return;
+      }
+
+      const xhr = new XMLHttpRequest();
+
+      xhr.open(
+        "PUT",
+        signedUrl,
+        true
+      );
+
+      xhr.setRequestHeader(
+        "Content-Type",
+        file.type ||
+          "application/octet-stream"
+      );
+
+      xhr.upload.onprogress = (
+        event
+      ) => {
+        if (!event.lengthComputable) {
+          return;
+        }
+
+        const percentage =
+          (event.loaded /
+            event.total) *
+          100;
+
+        updateUpload(
+          uploadId,
+          {
+            progress:
+              percentage
+          }
+        );
+      };
+
+      xhr.onload = () => {
+        if (
+          xhr.status >= 200 &&
+          xhr.status < 300
+        ) {
+          resolve();
+          return;
+        }
+
+        let message =
+          `Upload failed with status ${xhr.status}`;
+
+        try {
+          const response =
+            JSON.parse(
+              xhr.responseText
+            );
+
+          message =
+            response?.message ||
+            response?.error ||
+            message;
+        } catch {
+          if (
+            xhr.responseText
+          ) {
+            message =
+              xhr.responseText;
+          }
+        }
+
+        reject(
+          new Error(message)
+        );
+      };
+
+      xhr.onerror = () => {
+        reject(
+          new Error(
+            "Network error while uploading file"
+          )
+        );
+      };
+
+      xhr.onabort = () => {
+        reject(
+          new Error(
+            "Upload was cancelled"
+          )
+        );
+      };
+
+      updateUpload(
+        uploadId,
+        {
+          progress: 0
+        }
+      );
+
+      xhr.send(file);
+    }
+  );
+};
+
 export default function UploadDropzone({
   folderId = null,
   onUploaded
 }) {
-  const inputRef = useRef(null);
+  const inputRef =
+    useRef(null);
 
   const [uploads, setUploads] =
     useState([]);
@@ -85,128 +191,6 @@ export default function UploadDropzone({
     );
   };
 
-  const uploadWithTus = (
-    file,
-    uploadId,
-    init
-  ) => {
-    return new Promise(
-      (resolve, reject) => {
-        if (!SUPABASE_URL) {
-          reject(
-            new Error(
-              "NEXT_PUBLIC_SUPABASE_URL is not configured"
-            )
-          );
-
-          return;
-        }
-
-        if (
-          !init?.upload?.path ||
-          !init?.upload?.token
-        ) {
-          reject(
-            new Error(
-              "Invalid resumable upload information received from the server"
-            )
-          );
-
-          return;
-        }
-
-        const endpoint =
-          `${SUPABASE_URL}/storage/v1/upload/resumable`;
-
-        const upload =
-          new tus.Upload(
-            file,
-            {
-              endpoint,
-
-              chunkSize:
-                CHUNK_SIZE,
-
-              retryDelays: [
-                0,
-                1000,
-                3000,
-                5000,
-                10000
-              ],
-
-              headers: {
-                "x-signature":
-                  init.upload.token
-              },
-
-              metadata: {
-                bucketName:
-                  STORAGE_BUCKET,
-
-                objectName:
-                  init.upload.path,
-
-                contentType:
-                  file.type ||
-                  "application/octet-stream"
-              },
-
-              onError: (error) => {
-                console.error(
-                  "TUS upload error:",
-                  error
-                );
-
-                reject(
-                  error instanceof Error
-                    ? error
-                    : new Error(
-                        "Resumable upload failed"
-                      )
-                );
-              },
-
-              onProgress: (
-                bytesUploaded,
-                bytesTotal
-              ) => {
-                if (!bytesTotal) {
-                  return;
-                }
-
-                const percentage =
-                  (bytesUploaded /
-                    bytesTotal) *
-                  100;
-
-                updateUpload(
-                  uploadId,
-                  {
-                    progress:
-                      percentage
-                  }
-                );
-              },
-
-              onSuccess: () => {
-                resolve();
-              }
-            }
-          );
-
-        updateUpload(
-          uploadId,
-          {
-            progress: 0
-          }
-        );
-
-        upload.start();
-      }
-    );
-  };
-
   const uploadFile = async (
     file
   ) => {
@@ -225,6 +209,11 @@ export default function UploadDropzone({
     ]);
 
     try {
+      /*
+       * STEP 1
+       * Ask CloudNest backend to
+       * initialize the upload.
+       */
       const init =
         await initializeUpload({
           name: file.name,
@@ -238,10 +227,10 @@ export default function UploadDropzone({
       if (
         !init?.fileId ||
         !init?.upload?.path ||
-        !init?.upload?.token
+        !init?.upload?.signedUrl
       ) {
         throw new Error(
-          "Invalid upload information received from the server"
+          "Invalid signed upload information received from the server"
         );
       }
 
@@ -252,10 +241,19 @@ export default function UploadDropzone({
         }
       );
 
-      await uploadWithTus(
+      /*
+       * STEP 2
+       * Upload directly to Supabase
+       * using the signed URL.
+       *
+       * XMLHttpRequest gives us
+       * real upload progress.
+       */
+      await uploadToSignedUrl(
         file,
+        init.upload.signedUrl,
         uploadId,
-        init
+        updateUpload
       );
 
       updateUpload(
@@ -265,21 +263,32 @@ export default function UploadDropzone({
         }
       );
 
+      /*
+       * STEP 3
+       * Tell CloudNest that the
+       * Supabase upload completed.
+       */
       await completeUpload(
-        init.fileId
-      );
+  init.fileId
+);
 
-      updateUpload(
-        uploadId,
-        {
-          progress: 100,
-          status: "completed"
-        }
-      );
+updateUpload(
+  uploadId,
+  {
+    progress: 100,
+    status: "completed"
+  }
+);
 
-      if (onUploaded) {
-        await onUploaded();
-      }
+if (onUploaded) {
+  await onUploaded();
+}
+setUploads((current) =>
+  current.filter(
+    (upload) =>
+      upload.id !== uploadId
+  )
+);
     } catch (error) {
       console.error(
         "File upload error:",
@@ -332,6 +341,10 @@ export default function UploadDropzone({
       }
     };
 
+    /*
+     * Maximum 3 files can upload
+     * at the same time.
+     */
     const workerCount =
       Math.min(
         MAX_CONCURRENT_UPLOADS,
